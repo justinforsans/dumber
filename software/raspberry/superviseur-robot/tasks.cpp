@@ -27,7 +27,7 @@
 #define PRIORITY_TSTARTROBOT 20
 #define PRIORITY_TCAMERA 21
 #define PRIORITY_TBATTERY 24
-
+#define T100 100000000 //enough clock ticks to do 100 ms 
 /*
  * Some remarks:
  * 1- This program is mostly a template. It shows you how to create tasks, semaphore
@@ -95,6 +95,11 @@ void Tasks::Init() {
         cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    
+    if (err = rt_sem_create(&sem_startCam, NULL, 0, S_FIFO)) {
+        cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
     cout << "Semaphores created successfully" << endl << flush;
 
     /**************************************************************************************/
@@ -128,6 +133,12 @@ void Tasks::Init() {
         cerr << "Error task create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    
+    if (err = rt_task_create(&th_cam, "th_cam", 0, PRIORITY_TCAMERA, 0)) {
+        cerr << "Error task create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
+    
     cout << "Tasks created successfully" << endl << flush;
 
     /**************************************************************************************/
@@ -174,10 +185,16 @@ void Tasks::Run() {
         cerr << "Error task start: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
-    if (err = rt_task_start(&th_battery, (void(*)(void*)) & Tasks::BatteryTask, this)) {
+    /*if (err = rt_task_start(&th_battery, (void(*)(void*)) & Tasks::BatteryTask, this)) {
+        cerr << "Error task start: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }*/
+    if (err = rt_task_start(&th_cam, (void(*)(void*)) & Tasks::CameraTask, this)) {
         cerr << "Error task start: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    
+
 
     cout << "Tasks launched" << endl << flush;
 }
@@ -286,10 +303,19 @@ void Tasks::ReceiveFromMonTask(void *arg) {
             rt_mutex_acquire(&mutex_move, TM_INFINITE);
             move = msgRcv->GetID();
             rt_mutex_release(&mutex_move);
+        } else if (msgRcv ->CompareID(MESSAGE_CAM_OPEN))
+        {
+            rt_sem_v(&sem_startCam);
+            cameraOpen = true; 
+        }else if (msgRcv ->CompareID(MESSAGE_CAM_CLOSE))
+        {
+            cameraOpen = false; 
+            WriteInQueue(&q_messageToMon, new Message(MESSAGE_ANSWER_ACK));
+        }
         }
         delete(msgRcv); // mus be deleted manually, no consumer
     }
-}
+
 
 /**
  * @brief Thread opening communication with the robot.
@@ -371,7 +397,7 @@ void Tasks::MoveTask(void *arg) {
     /**************************************************************************************/
     /* The task starts here                                                               */
     /**************************************************************************************/
-    rt_task_set_periodic(NULL, TM_NOW, 100000000);
+    rt_task_set_periodic(NULL, TM_NOW, T100);
 
     while (1) {
         rt_task_wait_period(NULL);
@@ -426,20 +452,20 @@ Message *Tasks::ReadInQueue(RT_QUEUE *queue) {
     return msg;
 }
 
-/***
- * Displays battery level*/
+
+ /* Displays battery level*/
 void Tasks::BatteryTask(void *arg) {
     int rs;
     int lvl;
-    string msg;
+    Message* msg;
     
     cout << "Start " << __PRETTY_FUNCTION__ << endl << flush;
     // Synchronization barrier (waiting that all tasks are starting)
     rt_sem_p(&sem_barrier, TM_INFINITE);
     
-    /**************************************************************************************/
-    /* The task starts here                                                               */
-    /**************************************************************************************/
+    /*----------------------------------------------------------------------*/
+    /*----------------------THE TASK START HERE ----------------------------*/
+    /*----------------------------------------------------------------------*/
     rt_task_set_periodic(NULL, TM_NOW, 500000000);
 
     while (1) {
@@ -451,16 +477,52 @@ void Tasks::BatteryTask(void *arg) {
         if (rs == 1) {
           
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
-            robot.Write(new Message(MESSAGE_ROBOT_BATTERY_GET));
-            msg = robot.Read();
+            msg = robot.Write(new Message(MESSAGE_ROBOT_BATTERY_GET));
             rt_mutex_release(&mutex_robot);
             
-            cout << " Battery level : " << msg << endl << flush;
-            
-            
+            WriteInQueue(&q_messageToMon, msg);
         }
         
         rt_mutex_release(&mutex_robotStarted);
         cout << endl << flush;
     }
 }
+
+void Tasks::CameraTask(void *arg) {
+    
+
+
+     
+    cout << "Start " << __PRETTY_FUNCTION__ << endl << flush;
+    // Synchronization barrier (waiting that all tasks are starting)
+    rt_sem_p(&sem_barrier, TM_INFINITE);
+    
+    
+    Camera cam = Camera(); 
+    cam.Open();
+    
+    /**************************************************************************************/
+    /* The task starts here                                                               */
+    /**************************************************************************************/
+    rt_task_set_periodic(NULL, TM_NOW, T100);
+
+    while (1) {
+        rt_sem_p(&sem_startCam, TM_INFINITE);
+        cout << "camera open, start taking images" << endl; 
+        while (1) {
+            if (cameraOpen) {
+                rt_task_wait_period(NULL);
+                cout << "take an image";
+                Img img = cam.Grab();
+                Img * p_img = new Img(img);
+                MessageImg* msgI = new MessageImg(MESSAGE_CAM_IMAGE, p_img); 
+                cout << "send img message to minitor" << endl; 
+                WriteInQueue(&q_messageToMon, msgI);
+            }
+            else{
+                break;
+            }
+        }
+    }
+}
+
