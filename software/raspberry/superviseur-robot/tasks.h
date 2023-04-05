@@ -67,6 +67,7 @@ private:
     bool cameraOpen = false;
     int robotStarted = 0;
     int move = MESSAGE_ROBOT_STOP;
+    bool startWithWatchdog = false;
     
     /**********************************************************************/
     /* Tasks                                                              */
@@ -76,6 +77,7 @@ private:
     RT_TASK th_receiveFromMon;
     RT_TASK th_openComRobot;
     RT_TASK th_startRobot;
+    RT_TASK th_reloadWatchdog;
     RT_TASK th_move;
     RT_TASK th_battery;
     RT_TASK th_cam;
@@ -132,6 +134,11 @@ private:
      * @brief Thread starting the communication with the robot.
      */
     void StartRobotTask(void *arg);
+    
+    /**
+     * @brief Thread starting the communication with the robot.
+     */
+    void ReloadWatchdogTask(void *arg);
     
     /**
      * @brief Thread handling control of the robot.
