@@ -96,6 +96,10 @@ void Tasks::Init() {
         cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    if (err = rt_sem_create(&sem_startWithWatchdog, NULL, 0, S_FIFO)) {
+        cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
     if (err = rt_sem_create(&sem_startCam, NULL, 0, S_FIFO)) {
         cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
@@ -185,6 +189,10 @@ void Tasks::Run() {
         cerr << "Error task start: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }  
+    if (err = rt_task_start(&th_reloadWatchdog, (void(*)(void*)) & Tasks::ReloadWatchdogTask, this)) {
+        cerr << "Error task start: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
     if (err = rt_task_start(&th_move, (void(*)(void*)) & Tasks::MoveTask, this)) {
         cerr << "Error task start: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
@@ -300,8 +308,8 @@ void Tasks::ReceiveFromMonTask(void *arg) {
             startWithWatchdog = false;
             rt_sem_v(&sem_startRobot);
         } else if (msgRcv->CompareID(MESSAGE_ROBOT_START_WITH_WD)) {
-            rt_sem_v(&sem_startRobot);
             startWithWatchdog = true;
+            rt_sem_v(&sem_startRobot);
         } else if (msgRcv->CompareID(MESSAGE_ROBOT_GO_FORWARD) ||
                 msgRcv->CompareID(MESSAGE_ROBOT_GO_BACKWARD) ||
                 msgRcv->CompareID(MESSAGE_ROBOT_GO_LEFT) ||
@@ -370,29 +378,19 @@ void Tasks::StartRobotTask(void *arg) {
     /* The task startRobot starts here                                                    */
     /**************************************************************************************/
     while (1) {
-        
         Message * msgSend;
+        rt_sem_p(&sem_startRobot, TM_INFINITE);
         if (startWithWatchdog){
-            rt_sem_p(&sem_startRobot, TM_INFINITE);
-            cout << "Start robot with watchdog (";
+            cout << "Start robot with watchdog" << endl << flush;
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
             msgSend = robot.Write(robot.StartWithWD());
             rt_mutex_release(&mutex_robot);
-            cout << msgSend->GetID();
-            cout << ")" << endl;
+            rt_sem_broadcast(&sem_startWithWatchdog);
         } else {
-            rt_sem_p(&sem_startRobot, TM_INFINITE);
-            cout << "Start robot without watchdog (";
+            cout << "Start robot without watchdog" << endl << flush;
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
             msgSend = robot.Write(robot.StartWithoutWD());
             rt_mutex_release(&mutex_robot);
-            cout << msgSend->GetID();
-            cout << ")" << endl;
- 
-            if (err = rt_task_start(&th_reloadWatchdog, (void(*)(void*)) & Tasks::ReloadWatchdogTask, this)) {
-                cerr << "Error task start: " << strerror(-err) << endl << flush;
-                exit(EXIT_FAILURE);
-            }
         }
 
         cout << "Movement answer: " << msgSend->ToString() << endl << flush;
@@ -410,21 +408,21 @@ void Tasks::StartRobotTask(void *arg) {
  * @brief Thread handling watchdog of the robot.
  */
 void Tasks::ReloadWatchdogTask(void *arg) {
-    int rs;
-    int cpMove;
-    
-    cout << "Start " << __PRETTY_FUNCTION__ << endl << flush;
+    int rs;    
     // Synchronization barrier (waiting that all tasks are starting)
     rt_sem_p(&sem_barrier, TM_INFINITE);
+    cout << "waiting for WD barrier" << endl << flush;
+    rt_sem_p(&sem_startWithWatchdog, TM_INFINITE);
+    cout << "barriers crossed" << endl << flush;
     
     /**************************************************************************************/
     /* The task starts here                                                               */
     /**************************************************************************************/
-    rt_task_set_periodic(NULL, TM_NOW, 1000000000);
+    rt_task_set_periodic(NULL, TM_NOW, 2000000000);
 
     while (1) {
         rt_task_wait_period(NULL);
-        cout << "Reloading Watchdog : ";
+        cout << "Reloading Watchdog :";
         rt_mutex_acquire(&mutex_robotStarted, TM_INFINITE);
         rs = robotStarted;
         rt_mutex_release(&mutex_robotStarted);
@@ -432,9 +430,8 @@ void Tasks::ReloadWatchdogTask(void *arg) {
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
             robot.Write(robot.ReloadWD());
             rt_mutex_release(&mutex_robot);
-            cout << "done";
+            cout << " done" << endl << flush;
         }
-        cout << endl << flush;
     }
 }
 
@@ -456,7 +453,7 @@ void Tasks::MoveTask(void *arg) {
 
     while (1) {
         rt_task_wait_period(NULL);
-        cout << "Periodic movement update";
+        //cout << "Periodic movement update";
         rt_mutex_acquire(&mutex_robotStarted, TM_INFINITE);
         rs = robotStarted;
         rt_mutex_release(&mutex_robotStarted);
@@ -465,13 +462,12 @@ void Tasks::MoveTask(void *arg) {
             cpMove = move;
             rt_mutex_release(&mutex_move);
             
-            cout << " move: " << cpMove;
+            //cout << " move: " << cpMove << endl << flush;
             
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
             robot.Write(new Message((MessageID)cpMove));
             rt_mutex_release(&mutex_robot);
         }
-        cout << endl << flush;
     }
 }
 
@@ -500,9 +496,9 @@ Message *Tasks::ReadInQueue(RT_QUEUE *queue) {
     if ((err = rt_queue_read(queue, &msg, sizeof ((void*) &msg), TM_INFINITE)) < 0) {
         cout << "Read in queue failed: " << strerror(-err) << endl << flush;
         throw std::runtime_error{"Error in read in queue"};
-    }/** else {
+    }/* else {
         cout << "@msg :" << msg << endl << flush;
-    } /**/
+    } */
 
     return msg;
 }
