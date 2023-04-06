@@ -99,6 +99,7 @@ private:
     RT_SEM sem_serverOk;
     RT_SEM sem_startRobot;
     RT_SEM sem_startCam;
+    RT_SEM sem_startWithWatchdog;
 
 
     /**********************************************************************/
