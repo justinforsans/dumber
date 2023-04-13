@@ -70,6 +70,7 @@ private:
     int robotStarted = 0;
     Arena tmpLoadedArena;
     Arena loadedArena; 
+    bool startWithWatchdog = false;
     int move = MESSAGE_ROBOT_STOP;
     
     /**********************************************************************/
@@ -83,6 +84,7 @@ private:
     RT_TASK th_move;
     RT_TASK th_battery;
     RT_TASK th_cam;
+    RT_TASK th_reloadWatchdog;
     RT_TASK th_sendToRobot;
 
     
@@ -107,6 +109,7 @@ private:
     RT_SEM sem_startRobot;
     RT_SEM sem_startCam;
     RT_SEM sem_waitResponse; 
+    RT_SEM sem_startWithWatchdog;
 
 
     /**********************************************************************/
@@ -173,6 +176,9 @@ private:
     void CameraTask(void* arg);
     
     void WriteToRobot(void* arg); 
+    
+
+    void ReloadWatchdogTask(void *arg);
 };
 
 #endif // __TASKS_H__ 
